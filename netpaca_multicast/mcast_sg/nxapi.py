@@ -12,41 +12,13 @@
 #
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
-#
-
-"""
-This file contains the Multicast S,G flow status collector for
-Arista EOS.
-
-References
-----------
-Flags:
-    A - Learned via Anycast RP Router
-    B - Learned via Border Router
-    C - Learned from a DR via a register
-    D - Joining SPT due to protocol
-    E - Entry forwarding on the RPT
-    H - Joining SPT due to policy
-    I - SG Include Join alert rcvd
-    J - Joining to the SPT
-    K - Keepalive timer not running
-    L - Source is attached
-    M - Learned via MSDP
-    N - May notify MSDP
-    P - (*,G) Programmed in hardware
-    R - RPT bit is set
-    S - SPT bit is set
-    T - Switching Incoming Interface
-    W - Wildcard entry
-    X - External component interest
-    Z - Entry marked for deletion
-"""
 
 # -----------------------------------------------------------------------------
 # System Imports
 # -----------------------------------------------------------------------------
 
-from typing import Optional, List, Tuple
+from typing import Optional, List
+import re
 
 # -----------------------------------------------------------------------------
 # Public Imports
@@ -54,7 +26,7 @@ from typing import Optional, List, Tuple
 
 from netpaca import Metric, MetricTimestamp
 from netpaca.collectors.executor import CollectorExecutor
-from netpaca.drivers.eapi import Device
+from netpaca.drivers.nxapi import Device
 
 # -----------------------------------------------------------------------------
 # Private Imports
@@ -76,7 +48,7 @@ __all__ = []
 
 # -----------------------------------------------------------------------------
 #
-#                     Register Arista Device to Colletor Type
+#                     Register Cisco NX-OS Device to Colletor Type
 #
 # -----------------------------------------------------------------------------
 
@@ -102,7 +74,11 @@ async def start(
         The collector model instance that contains information about the
         collector; for example the collector configuration values.
     """
-    device.log.info(f"{device.name}: Starting Arista EOS MC S,G flow status collector")
+    device.log.info(f"{device.name}: Starting NX-OS NXAPI MC S,G flow status collector")
+
+    # TODO: hardcoding API version for N9K v7.0 release.  Need to find a better
+    #       way for accounting for these differences.
+    device.nxapi.api.API_VER = "1.0"
 
     executor.start(
         # required args
@@ -112,13 +88,6 @@ async def start(
         # kwargs to collector coroutine:
         config=spec.config,
     )
-
-
-# -----------------------------------------------------------------------------
-#
-#                             Collector Coroutine
-#
-# -----------------------------------------------------------------------------
 
 
 async def get_mcast_flow_metrics(
@@ -146,32 +115,18 @@ async def get_mcast_flow_metrics(
     -------
     Option list of Metic items.
     """
+    res = await device.nxapi.exec(["show ip mroute source-tree detail"])
 
-    # Execute the required "show" commands to colelct the interface information
-    # needed to produce the Metrics
-
-    cli_res = await device.eapi.exec(["show ip mroute"])
-    cli_sh_ip_mroute = cli_res[0]
-
-    if not cli_sh_ip_mroute.ok:
+    if not res[0].ok:
+        # TODO: add reason for failure from response body to log message
         device.log.error(
-            f"{device.name}: failed to collect MROUTE information: {cli_sh_ip_mroute.output}, skipping."
+            f"{device.name}: failed to collect MROUTE information, skipping."
         )
-        return
+        return None
 
     metrics = [
-        mcast_sg.McastSGStatus(
-            ts=timestamp,
-            value=_mcast_sg_status(mcast_flow=flow_data),
-            tags={
-                "S": mcast_S,
-                "G": mcast_G,
-                "flags": flow_data["routeFlags"],
-                "rpf_if_name": flow_data["rpfInterface"],
-                "oif_list": ",".join(flow_data["oifList"]),
-            },
-        )
-        for mcast_S, mcast_G, flow_data in _find_mcast_sg_flows(cli_sh_ip_mroute.output)
+        _make_metric(timestamp, xml_sg_rec)
+        for xml_sg_rec in res[0].output.xpath(".//ROW_one_route")
     ]
 
     return metrics
@@ -183,36 +138,33 @@ async def get_mcast_flow_metrics(
 #
 # -----------------------------------------------------------------------------
 
+_re_extracto_S_G = re.compile(r"\((?P<S>.+)/\d+, (?P<G>.+)/\d+\)").match
 
-def _mcast_sg_status(mcast_flow):
-    flags = mcast_flow["routeFlags"]
 
-    if flags.startswith("S"):
-        return 0 if mcast_flow["oifList"] else 1
+def _make_metric(ts, xml_sg_rec) -> Metric:
+    mo = _re_extracto_S_G(xml_sg_rec.findtext("mcast-addrs"))
 
-    if flags.startswith("J"):
+    status = _form_sg_status(xml_sg_rec)
+    mcast_s, mcast_g = mo.group("S"), mo.group("G")
+    oif_list = xml_sg_rec.xpath("TABLE_oif/ROW_oif/oif-name/text()")
+
+    return mcast_sg.McastSGStatus(
+        tags={
+            "S": mcast_s,
+            "G": mcast_g,
+            "rpf_if_name": xml_sg_rec.findtext("route-iif"),
+            "oif_count": str(len(oif_list)),
+            "oif_list": ",".join(oif_list),
+        },
+        ts=ts,
+        value=status,
+    )
+
+
+def _form_sg_status(xml_sg_rec) -> int:
+
+    if xml_sg_rec.findtext("pending") == "true":
         return 2
 
-    return 1
-
-
-def _find_mcast_sg_flows(cli_data) -> Tuple[str, str, dict]:
-    """
-    This generator will yield a tuple of S,G,data for each multicast.
-
-    Parameters
-    ----------
-    cli_data: dict
-        The dict result from the CLI show command
-
-    Yields
-    ------
-    Tuple where first item is the multicast source (S) ipaddress, then the
-    multicast group (G) ipaddress, then the dataset associated with the S,G flow
-    in CLI dict form.
-    """
-    all_mc_gr_data = cli_data["groups"]
-    for mc_g_ip, mc_g_data in all_mc_gr_data.items():
-        for mc_s_ip, mc_s_data in mc_g_data["groupSources"].items():
-            if mc_s_ip != "0.0.0.0":
-                yield mc_s_ip, mc_g_ip, mc_s_data
+    # if the rate of the counters are 0, then this is an inactive flow
+    return 1 if xml_sg_rec.findtext("stats-rate-buf").startswith("0.000 ") else 0

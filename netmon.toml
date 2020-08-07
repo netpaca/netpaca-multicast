@@ -96,3 +96,7 @@
 [device_drivers.eos]
     use = "netpaca.device_drivers:arista.eos"
     modules = ["netpaca_multicast.mcast_sg.eapi"]
+
+[device_drivers.nxos]
+    use = "netpaca.device_drivers:cisco.nxapi"
+    modules = ["netpaca_multicast.mcast_sg.nxapi"]
