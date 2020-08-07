@@ -52,9 +52,9 @@ from typing import Optional, List, Tuple
 # Public Imports
 # -----------------------------------------------------------------------------
 
-from nwkatk_netmon import Metric, MetricTimestamp
-from nwkatk_netmon.collectors.executor import CollectorExecutor
-from nwkatk_netmon.drivers.eapi import Device
+from netpaca import Metric, MetricTimestamp
+from netpaca.collectors.executor import CollectorExecutor
+from netpaca.drivers.eapi import Device
 
 # -----------------------------------------------------------------------------
 # Private Imports
@@ -83,7 +83,7 @@ __all__ = []
 
 @mcast_sg.register
 async def start(
-    device: Device, executor: CollectorExecutor, spec: mcast_sg.CollectorModel,
+    device: Device, executor: CollectorExecutor, spec: mcast_sg.MCastSGCollectorConfig,
 ):
     """
     The IF DOM collector start coroutine for Arista EOS devices.  The purpose of this

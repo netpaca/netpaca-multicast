@@ -73,7 +73,7 @@
 # -----------------------------------------------------------------------------
 
 [exporters.influxdb]
-    use = "nwka_netmon.exporters:influxdb"
+    use = "netpaca.exporters:influxdb"
     config.server_url = "$INFLUXDB_SERVER"
     config.database = "multicast"
 
@@ -94,5 +94,5 @@
 # -----------------------------------------------------------------------------
 
 [device_drivers.eos]
-    use = "nwka_netmon.device_drivers:arista.eos"
+    use = "netpaca.device_drivers:arista.eos"
     modules = ["netpaca_multicast.mcast_sg.eapi"]

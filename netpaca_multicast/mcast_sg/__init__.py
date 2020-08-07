@@ -19,13 +19,12 @@ This file contains the network monitoring collector for Multicast S,G health
 check.
 """
 
-from typing import Optional
 from pydantic.dataclasses import dataclass
-from pydantic import conint, Field
+from pydantic import conint
 
-from nwkatk_netmon import Metric
-from nwkatk_netmon.collectors import CollectorType, CollectorConfigModel
-from nwkatk_netmon.config_model import CollectorModel  # noqa
+from netpaca import Metric
+from netpaca.collectors import CollectorType, CollectorConfigModel
+from netpaca.config_model import CollectorModel  # noqa
 
 __all__ = [
     'MCastSGCollectorConfig'
@@ -103,4 +102,3 @@ Used to collect the state of multicast (S,G) flows
 # can register their start functions.
 
 register = McastSGCollector.start.register
-

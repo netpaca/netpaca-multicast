@@ -1,2 +1,2 @@
 pydantic
-nwkatk-netmon
+netpaca
