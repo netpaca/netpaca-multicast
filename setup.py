@@ -44,7 +44,11 @@ setup(
     packages=find_packages(),
     include_package_data=True,
     install_requires=requirements(),
-    entry_points={"netpaca.collectors": ["mcast_sg = netpaca_multicast.mcast_sg:McastSGCollector"],},
+    entry_points={
+        "netpaca.collectors": [
+            "mcast_sg = netpaca_multicast.mcast_sg:McastSGCollector"
+        ],
+    },
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",

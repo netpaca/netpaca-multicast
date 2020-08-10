@@ -26,9 +26,7 @@ from netpaca import Metric
 from netpaca.collectors import CollectorType, CollectorConfigModel
 from netpaca.config_model import CollectorModel  # noqa
 
-__all__ = [
-    'MCastSGCollectorConfig'
-]
+__all__ = ["MCastSGCollectorConfig"]
 
 # -----------------------------------------------------------------------------
 #
@@ -41,7 +39,9 @@ __all__ = [
 
 class MCastSGCollectorConfig(CollectorConfigModel):
     """ no additional config options at this time"""
+
     pass
+
 
 # -----------------------------------------------------------------------------
 #
@@ -93,9 +93,7 @@ class McastSGCollector(CollectorType):
 Used to collect the state of multicast (S,G) flows
 """
 
-    metrics = [
-        McastSGStatus
-    ]
+    metrics = [McastSGStatus]
 
 
 # create an "alias" variable so that the device specific collector packages
