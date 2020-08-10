@@ -13,6 +13,26 @@
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+"""
+This file contains the multicast S,G health collector for Cisco NX-OS
+via NXAPI.  The flags must be collected using a CLI command that
+is not supported by NXAPI in the v7.0 release.
+
+References
+----------
+Cisco CLI Flags:
+
+    device# show forwarding distribution multicast route
+    Legend:
+       C = Control Route
+       D = Drop Route
+       G = Local Group (directly connected receivers)
+       O = Drop on RPF Fail
+       P = Punt to supervisor
+       L = SRC behind L3
+       d = Decap Route
+
+"""
 # -----------------------------------------------------------------------------
 # System Imports
 # -----------------------------------------------------------------------------
@@ -24,6 +44,7 @@ import re
 # Public Imports
 # -----------------------------------------------------------------------------
 
+from ttp import ttp
 from netpaca import Metric, MetricTimestamp
 from netpaca.collectors.executor import CollectorExecutor
 from netpaca.drivers.nxapi import Device
@@ -124,9 +145,23 @@ async def get_mcast_flow_metrics(
         )
         return None
 
+    xml_mroute_sgtree = res[0].output
+
+    # the above CLI command does not provide the flags we need to check, so we
+    # need to run another command:
+
+    res = await device.nxapi.exec(
+        [" show forwarding distribution multicast route"], ofmt="text"
+    )
+    if not res[0].ok:
+        device.log.error(f"{device.name}: failed to collect FDMR")
+        return None
+
+    fdmr_data = _parse_show_fdmr(res[0].output)
+
     metrics = [
-        _make_metric(timestamp, xml_sg_rec)
-        for xml_sg_rec in res[0].output.xpath(".//ROW_one_route")
+        _make_metric(timestamp, xml_sg_rec, fdmr_data)
+        for xml_sg_rec in xml_mroute_sgtree.xpath(".//ROW_one_route")
     ]
 
     return metrics
@@ -141,11 +176,12 @@ async def get_mcast_flow_metrics(
 _re_extracto_S_G = re.compile(r"\((?P<S>.+)/\d+, (?P<G>.+)/\d+\)").match
 
 
-def _make_metric(ts, xml_sg_rec) -> Metric:
+def _make_metric(ts, xml_sg_rec, fdmr_data) -> Metric:
     mo = _re_extracto_S_G(xml_sg_rec.findtext("mcast-addrs"))
 
-    status = _form_sg_status(xml_sg_rec)
     mcast_s, mcast_g = mo.group("S"), mo.group("G")
+    mcast_flags = fdmr_data.get((mcast_s, mcast_g), "")
+    status = _form_sg_status(xml_sg_rec, mcast_flags)
     oif_list = xml_sg_rec.xpath("TABLE_oif/ROW_oif/oif-name/text()")
 
     return mcast_sg.McastSGStatus(
@@ -153,6 +189,7 @@ def _make_metric(ts, xml_sg_rec) -> Metric:
             "S": mcast_s,
             "G": mcast_g,
             "rpf_if_name": xml_sg_rec.findtext("route-iif"),
+            "flags": mcast_flags,
             "oif_count": str(len(oif_list)),
             "oif_list": ",".join(oif_list),
         },
@@ -161,10 +198,37 @@ def _make_metric(ts, xml_sg_rec) -> Metric:
     )
 
 
-def _form_sg_status(xml_sg_rec) -> int:
+def _form_sg_status(xml_sg_rec, flags) -> int:
 
     if xml_sg_rec.findtext("pending") == "true":
         return 2
 
+    if "O" in flags or "D" in flags:
+        return 2
+
     # if the rate of the counters are 0, then this is an inactive flow
     return 1 if xml_sg_rec.findtext("stats-rate-buf").startswith("0.000 ") else 0
+
+
+# -----------------------------------------------------------------------------
+#                     CLI Text Parser (TTP) for FDMR commmand
+# -----------------------------------------------------------------------------
+
+_CLI_FDMR_TEMPLATE = """
+<group name="mc_flows">
+  ({{ source_ipaddr | IP | _start_ }}/32, {{ group_ipaddr | IP }}/32), RPF Interface: {{ ignore }}, flags: {{ flags }}
+</group>
+"""
+
+
+def _parse_show_fdmr(cli_text):
+    parser = ttp(data=cli_text, template=_CLI_FDMR_TEMPLATE, log_level="none")
+
+    parser.parse()
+    if not (found := parser.result()[0]):
+        return {}
+
+    return {
+        (rec["source_ipaddr"], rec["group_ipaddr"]): rec["flags"]
+        for rec in found[0]["mc_flows"]
+    }
